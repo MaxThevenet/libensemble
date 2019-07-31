@@ -29,6 +29,7 @@ from multiprocessing import Process, Queue, Value, Lock
 from traceback import format_exc
 import queue
 import copy
+import socket
 
 import numpy as np
 
@@ -123,6 +124,9 @@ class QComm(Comm):
         # #global _ncomms
         # with QComm.lock:
             # QComm._ncomms.value -= 1
+
+    def get_hosts():
+        return socket.gethostname()
 
     def get_num_workers(self):
         """Return global _ncomms"""

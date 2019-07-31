@@ -89,6 +89,13 @@ class MPIComm(Comm):
         assert self._pushed is None, "Cannot push back multiple messages"
         self._pushed = args
 
+    def get_hosts():
+        local_host = socket.gethostname()
+        all_hosts = self.mpi_comm.allgather(local_host)
+        unique_hosts = list(set(all_hosts))
+        # unique_hosts = list(OrderedDict.fromkeys(all_hosts))
+        return unique_hosts
+
     def get_num_workers(self):
         return self.mpi_comm.Get_size() - 1
 
