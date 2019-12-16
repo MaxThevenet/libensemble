@@ -7,6 +7,7 @@ from forces_simf import run_forces  # Sim func from current dir
 from libensemble.libE import libE
 from libensemble.gen_funcs.sampling import uniform_random_sample
 from libensemble.utils import parse_args, save_libE_output, add_unique_random_streams
+from libensemble.alloc_funcs.give_sim_work_first import give_sim_work_first
 
 from libensemble import libE_logger
 libE_logger.set_level('INFO')  # Info is now default - but shows usage.
@@ -18,11 +19,7 @@ nworkers, is_master, libE_specs, _ = parse_args()
 if is_master:
     print('\nRunning with {} workers\n'.format(nworkers))
 
-# Get this script name (for output at end)
-script_name = os.path.splitext(os.path.basename(__file__))[0]
-
 sim_app = os.path.join(os.getcwd(), 'forces.x')
-# print('sim_app is ', sim_app)
 
 # Normally would be pre-compiled
 if not os.path.isfile('forces.x'):
@@ -30,10 +27,13 @@ if not os.path.isfile('forces.x'):
         import subprocess
         subprocess.check_call(['./build_forces.sh'])
 
+libE_specs['save_every_k_gens'] = 1000  # Save every K steps
+libE_specs['sim_dir'] = './sim'         # Sim dir to be copied for each worker
+libE_specs['profile_worker'] = False    # Whether to have libE profile on
+
 # Normally the sim_dir will exist with common input which is copied for each worker. Here it starts empty.
-# Create if no ./sim dir. See libE_specs['sim_dir']
-if not os.path.isdir('./sim'):
-    os.mkdir('./sim')
+# Create if no ./sim dir present.
+os.makedirs(libE_specs['sim_dir'], exist_ok=True)
 
 # Create job_controller and register sim to it.
 if USE_BALSAM:
@@ -57,7 +57,7 @@ sim_specs = {'sim_f': run_forces,         # Function whose output is being minim
                       'sim_timesteps': 5,
                       'sim_kill_minutes': 10.0,
                       'particle_variance': 0.2,
-                      'kill_rate': 0.5}   # Used by this specific sim_f
+                      'kill_rate': 0.5}
              }
 # end_sim_specs_rst_tag
 
@@ -68,14 +68,14 @@ gen_specs = {'gen_f': uniform_random_sample,  # Generator function
              'user': {'lb': np.array([0]),             # Lower bound for random sample array (1D)
                       'ub': np.array([32767]),         # Upper bound for random sample array (1D)
                       'gen_batch_size': 1000,          # How many random samples to generate in one call
-                      'batch_mode': True,              # If true wait for sims to process before generate more
-                      'num_active_gens': 1,            # Only one active generator at a time.
                       }
              }
 
-libE_specs['save_every_k_gens'] = 1000  # Save every K steps
-libE_specs['sim_dir'] = './sim'         # Sim dir to be copied for each worker
-libE_specs['profile_worker'] = False    # Whether to have libE profile on
+alloc_specs = {'alloc_f': give_sim_work_first,
+               'out': [('allocated', bool)],
+               'user': {'batch_mode': True,    # If true wait for all sims to process before generate more
+                        'num_active_gens': 1}  # Only one active generator at a time
+               }
 
 # Maximum number of simulations
 sim_max = 8
@@ -85,7 +85,10 @@ exit_criteria = {'sim_max': sim_max}
 persis_info = {}
 persis_info = add_unique_random_streams(persis_info, nworkers + 1)
 
-H, persis_info, flag = libE(sim_specs, gen_specs, exit_criteria, persis_info=persis_info, libE_specs=libE_specs)
+H, persis_info, flag = libE(sim_specs, gen_specs, exit_criteria,
+                            persis_info=persis_info,
+                            alloc_specs=alloc_specs,
+                            libE_specs=libE_specs)
 
 # Save results to numpy file
 if is_master:
