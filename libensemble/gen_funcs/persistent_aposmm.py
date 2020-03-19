@@ -357,6 +357,8 @@ class LocalOptInterfacer(object):
         """
         self.parent_can_read.clear()
 
+        delib=excpt
+
         if 'grad' in data.dtype.names:
             self.comm_queue.put((data['x_on_cube'], data['f'], data['grad']))
         elif 'fvec' in data.dtype.names:

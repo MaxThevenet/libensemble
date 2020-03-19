@@ -93,7 +93,8 @@ before_script:
 
 # Run test (-z show output)
 script:
-  - ./libensemble/tests/run-tests.sh -z
+  - ./libensemble/tests/run-tests.sh -z -r
+  - cat libensemble/tests/regression_tests/ensemble.log
 
 # Track code coverage
 after_success:
