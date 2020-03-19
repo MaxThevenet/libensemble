@@ -10,7 +10,7 @@
 # """
 
 # Do not change these lines - they are parsed by run-tests.sh
-# TESTSUITE_COMMS: local
+# TESTSUITE_COMMS: local mpi
 # TESTSUITE_NPROCS: 4
 
 import sys
@@ -18,8 +18,10 @@ import numpy as np
 
 # Import libEnsemble items for this test
 from libensemble.libE import libE
+from math import gamma, pi, sqrt, ceil
 from libensemble.sim_funcs.chwirut1 import chwirut_eval as sim_f
 from libensemble.gen_funcs.persistent_aposmm import aposmm as gen_f
+from libensemble.gen_funcs.sampling import lhs_sample
 from libensemble.alloc_funcs.persistent_aposmm_alloc import persistent_aposmm_alloc as alloc_f
 from libensemble.tools import parse_args, save_libE_output, add_unique_random_streams
 
@@ -42,27 +44,37 @@ sim_specs = {'sim_f': sim_f,
 gen_out = [('x', float, n), ('x_on_cube', float, n), ('sim_id', int),
            ('local_min', bool), ('local_pt', bool)]
 
+
 # lb tries to avoid x[1]=-x[2], which results in division by zero in chwirut.
+lb = (-2-np.pi/10)*np.ones(n)
+ub = 2*np.ones(n)
+
 gen_specs = {'gen_f': gen_f,
              'in': [],
              'out': gen_out,
              'user': {'initial_sample_size': 100,
-                      'localopt_method': 'dfols',
+                      'localopt_method': 'pounders',
+                      'rk_const': 0.5*((gamma(1+(n/2))*5)**(1/n))/sqrt(pi),
+                      'grtol': 1e-6,
+                      'gatol': 1e-6,
+                      'dist_to_bound_multiple': 0.5,
+                      'lhs_divisions': 100,
                       'components': m,
-                      'dfols_kwargs': {'do_logging': False,
-                                       'rhoend': 1e-5,
-                                       'user_params': {'model.abs_tol': 1e-10,
-                                                       'model.rel_tol': 1e-4}
-                                       },
-                      'lb': (-2-np.pi/10)*np.ones(n),
-                      'ub': 2*np.ones(n)}
+                      'lb': lb,
+                      'ub': ub}
              }
 
-alloc_specs = {'alloc_f': alloc_f, 'out': [('given_back', bool)], 'user': {}}
+alloc_specs = {'alloc_f': alloc_f, 'out': [('given_back', bool)], 'user': {'batch_mode': True, 'num_active_gens': 1}}
 
 persis_info = add_unique_random_streams({}, nworkers + 1)
 
-exit_criteria = {'sim_max': 10000}
+exit_criteria = {'sim_max': 500}
+
+sample_points = np.zeros((0, n))
+for i in range(ceil(exit_criteria['sim_max']/gen_specs['user']['lhs_divisions'])):
+    sample_points = np.append(sample_points, lhs_sample(n, gen_specs['user']['lhs_divisions']), axis=0)
+
+gen_specs['user']['sample_points'] = sample_points*(ub-lb) + lb
 
 # Perform the run
 H, persis_info, flag = libE(sim_specs, gen_specs, exit_criteria, persis_info,
@@ -73,22 +85,7 @@ if is_master:
     assert len(H) >= budget
 
     save_libE_output(H, persis_info, __file__, nworkers)
-
-    # # Calculating the Jacobian at local_minima (though this information was not used by DFO-LS)
-    # from libensemble.sim_funcs.chwirut1 import EvaluateFunction, EvaluateJacobian
-    # for i in np.where(H['local_min'])[0]:
-
-    #     F = EvaluateFunction(H['x'][i])
-    #     J = EvaluateJacobian(H['x'][i])
-    #     u = gen_specs['user']['ub']-H['x'][i]
-    #     l = H['x'][i]-gen_specs['user']['lb']
-    #     if np.any(u <= 1e-7) or np.any(l <= 1e-7):
-    #         grad = -2*np.dot(J.T,F)
-    #         assert np.all(grad[u<=1e-7] >= 0)
-    #         assert np.all(grad[l<=1e-7] <= 0)
-
-    #         if not np.all(grad[np.logical_and(u>=1e-7,l>=1e-7)] <= 1e-5):
-    #             import ipdb; ipdb.set_trace()
-    #     else:
-    #         d = np.linalg.solve(np.dot(J.T,J),np.dot(J.T,F))
-    #         assert np.linalg.norm(d) <= 1e-5
+    # # Calculating the Jacobian at the best point (though this information was not used by pounders)
+    # from libensemble.sim_funcs.chwirut1 import EvaluateJacobian
+    # J = EvaluateJacobian(H['x'][np.argmin(H['f'])])
+    # assert np.linalg.norm(J) < 2000
